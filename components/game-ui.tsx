@@ -2,7 +2,7 @@
 
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "./ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
@@ -31,7 +31,7 @@ import {
   ChevronRight as ChevronRightIcon,
 } from "lucide-react";
 import Image from "next/image";
-
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 interface SearchResult {
   id: string;
   username: string;
@@ -60,6 +60,20 @@ interface NadData {
 interface NadBatchItem {
   nadId: number;
   walletAddress: string;
+  x: {
+    id: string;
+    pp: string;
+    username: string;
+    displayName: string;
+  };
+  isPlayer: boolean;
+  slapsGiven: number;
+  slapsReceived: number;
+}
+
+interface LeaderboardItem {
+  wallet: string;
+  nadId: number;
   x: {
     id: string;
     pp: string;
@@ -102,8 +116,8 @@ export default function GameUI() {
   const [showDropdown, setShowDropdown] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [selectedNad, setSelectedNad] = useState<SearchResult | null>(null);
-  const [topSlappers, setTopSlappers] = useState<string[]>([]);
-  const [topSlapped, setTopSlapped] = useState<string[]>([]);
+  const [topSlappers, setTopSlappers] = useState<LeaderboardItem[]>([]);
+  const [topSlapped, setTopSlapped] = useState<LeaderboardItem[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
   // NAD List Modal states
@@ -114,13 +128,16 @@ export default function GameUI() {
   const [totalNads, setTotalNads] = useState(0);
   const nadsPerPage = 10;
 
+  // X Search states
+  const [isAddingToContract, setIsAddingToContract] = useState(false);
+
   // Load leaderboard data
   const loadLeaderboard = async () => {
     setLeaderboardLoading(true);
     try {
       const [slappers, slapped] = await Promise.all([getTopSlappers(), getTopSlapped()]);
-      setTopSlappers((slappers as string[]) || []);
-      setTopSlapped((slapped as string[]) || []);
+      setTopSlappers((slappers as LeaderboardItem[]) || []);
+      setTopSlapped((slapped as LeaderboardItem[]) || []);
     } catch (error) {
       console.error("Error loading leaderboard:", error);
     } finally {
@@ -177,7 +194,7 @@ export default function GameUI() {
     setShowNadList(false);
   };
 
-  // Username search function
+  // Username search function (NAD search)
   const handleUsernameSearch = async (searchTerm: string) => {
     if (searchTerm.length < 2) {
       setSearchResults([]);
@@ -208,7 +225,7 @@ export default function GameUI() {
         setShowDropdown(true);
       }
     } catch (error) {
-      console.error("Search error:", error);
+      console.error("NAD search error:", error);
       setSearchResults([]);
     } finally {
       setIsSearching(false);
@@ -311,7 +328,7 @@ export default function GameUI() {
               </div>
               <div>
                 <h1 className="text-3xl font-black text-white">SlapNads</h1>
-                <p className="text-slate-400 text-sm">The Ultimate Slapping Arena</p>
+                <p className="text-slate-400 text-sm">The Ultimate Fully On-Chain Slapping Arena</p>
               </div>
             </div>
             <div className="flex items-center space-x-2">
@@ -339,6 +356,7 @@ export default function GameUI() {
                   <span>Leaderboard</span>
                 </CardTitle>
               </CardHeader>
+              {/* TODO: update leaderboard to show unclaimed nads */}
               <CardContent className="space-y-6">
                 {/* Top Slappers */}
                 <div>
@@ -353,7 +371,7 @@ export default function GameUI() {
                       </div>
                     ) : topSlappers.length > 0 ? (
                       <div className="space-y-2">
-                        {topSlappers.map((wallet: string, index: number) => {
+                        {topSlappers.map((slapper: LeaderboardItem, index: number) => {
                           const getRankStyle = (rank: number) => {
                             if (rank === 1)
                               return {
@@ -380,8 +398,21 @@ export default function GameUI() {
 
                           return (
                             <div
-                              key={index}
-                              className={`flex items-center space-x-3 p-3 rounded-lg ${style.bg} transition-colors`}
+                              key={slapper.nadId}
+                              className={`flex items-center space-x-3 p-3 rounded-lg ${style.bg} transition-colors cursor-pointer`}
+                              onClick={() =>
+                                handleNadListSelection({
+                                  id: slapper.nadId.toString(),
+                                  username: slapper.x.username,
+                                  displayName: slapper.x.displayName,
+                                  nadId: slapper.nadId,
+                                  walletAddress: slapper.wallet,
+                                  isPlayer: slapper.isPlayer,
+                                  slapsGiven: slapper.slapsGiven,
+                                  slapsReceived: slapper.slapsReceived,
+                                  pp: slapper.x.pp,
+                                })
+                              }
                             >
                               <Badge
                                 variant="secondary"
@@ -389,12 +420,31 @@ export default function GameUI() {
                               >
                                 {index + 1}
                               </Badge>
+                              <Avatar className="w-8 h-8">
+                                <AvatarImage src={slapper.x.pp} />
+                                <AvatarFallback className="bg-slate-500 text-white text-xs">
+                                  {slapper.x.displayName
+                                    ? slapper.x.displayName.charAt(0)
+                                    : slapper.wallet.slice(2, 4).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-mono text-slate-300 truncate">
-                                  {wallet.slice(0, 6)}...{wallet.slice(-4)}
+                                <p className="text-sm font-semibold text-slate-200 truncate">
+                                  {slapper.x.displayName ||
+                                    `${slapper.wallet.slice(0, 6)}...${slapper.wallet.slice(-4)}`}
+                                </p>
+                                <p className="text-xs text-slate-400 truncate">
+                                  {slapper.x.username ? `@${slapper.x.username}` : `NAD #${slapper.nadId}`}
                                 </p>
                               </div>
-                              <Crown className="w-4 h-4 text-slate-400" />
+                              <div className="text-right">
+                                <Badge
+                                  variant="outline"
+                                  className="text-emerald-400 border-emerald-400 bg-emerald-500/10 text-xs"
+                                >
+                                  {slapper.slapsGiven}
+                                </Badge>
+                              </div>
                             </div>
                           );
                         })}
@@ -423,7 +473,7 @@ export default function GameUI() {
                       </div>
                     ) : topSlapped.length > 0 ? (
                       <div className="space-y-2">
-                        {topSlapped.map((wallet: string, index: number) => {
+                        {topSlapped.map((victim: LeaderboardItem, index: number) => {
                           const getRankStyle = (rank: number) => {
                             if (rank === 1)
                               return {
@@ -450,8 +500,21 @@ export default function GameUI() {
 
                           return (
                             <div
-                              key={index}
-                              className={`flex items-center space-x-3 p-3 rounded-lg ${style.bg} transition-colors`}
+                              key={victim.nadId}
+                              className={`flex items-center space-x-3 p-3 rounded-lg ${style.bg} transition-colors cursor-pointer`}
+                              onClick={() =>
+                                handleNadListSelection({
+                                  id: victim.nadId.toString(),
+                                  username: victim.x.username,
+                                  displayName: victim.x.displayName,
+                                  nadId: victim.nadId,
+                                  walletAddress: victim.wallet,
+                                  isPlayer: victim.isPlayer,
+                                  slapsGiven: victim.slapsGiven,
+                                  slapsReceived: victim.slapsReceived,
+                                  pp: victim.x.pp,
+                                })
+                              }
                             >
                               <Badge
                                 variant="secondary"
@@ -459,12 +522,27 @@ export default function GameUI() {
                               >
                                 {index + 1}
                               </Badge>
+                              <Avatar className="w-8 h-8">
+                                <AvatarImage src={victim.x.pp} />
+                                <AvatarFallback className="bg-slate-500 text-white text-xs">
+                                  {victim.x.displayName
+                                    ? victim.x.displayName.charAt(0)
+                                    : victim.wallet.slice(2, 4).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-mono text-slate-300 truncate">
-                                  {wallet.slice(0, 6)}...{wallet.slice(-4)}
+                                <p className="text-sm font-semibold text-slate-200 truncate">
+                                  {victim.x.displayName || `${victim.wallet.slice(0, 6)}...${victim.wallet.slice(-4)}`}
+                                </p>
+                                <p className="text-xs text-slate-400 truncate">
+                                  {victim.x.username ? `@${victim.x.username}` : `NAD #${victim.nadId}`}
                                 </p>
                               </div>
-                              <Target className="w-4 h-4 text-slate-400" />
+                              <div className="text-right">
+                                <Badge variant="outline" className="text-red-400 border-red-400 bg-red-500/10 text-xs">
+                                  {victim.slapsReceived}
+                                </Badge>
+                              </div>
                             </div>
                           );
                         })}
@@ -487,6 +565,9 @@ export default function GameUI() {
                   Refresh
                 </Button>
               </CardContent>
+              <CardFooter>
+                <p className="text-xs text-slate-400">PS: Unclaimed nads are not listed. The issue has been noted.</p>
+              </CardFooter>
             </Card>
           </div>
 
@@ -502,10 +583,25 @@ export default function GameUI() {
                 <CardDescription>Search for NADs to challenge in the arena</CardDescription>
               </CardHeader>
               <CardContent className="relative">
+                {/* Search Mode Toggle */}
+                <div className="flex items-center space-x-2 mb-4">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      setUsername("");
+                      setShowDropdown(false);
+                    }}
+                    className="text-xs"
+                  >
+                    🎯 NAD Search
+                  </Button>
+                </div>
+
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Search className="absolute top-3 left-3  my-auto w-4 text-slate-400" />
                   <Input
-                    placeholder="Enter X username to find NAD..."
+                    placeholder="Search X username (Please write exact username)..."
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     onKeyDown={(e) => {
@@ -517,10 +613,13 @@ export default function GameUI() {
                     className="pl-10 bg-white/5 border-white/20 text-white placeholder:text-slate-400 focus:border-slate-400 h-12"
                     onFocus={() => username.length >= 2 && setShowDropdown(true)}
                   />
+                  {/* TODO: add search mode toggle and implement x search with auto add to contract if not found*/}
+                  <p className="text-xs text-slate-400">
+                    PS: You can use NAD List to search for NADs. Only fully linked users or manually added to the
+                    contract are listed. This issue has been noted.
+                  </p>
                   <div className="flex items-center justify-between mt-2">
-                    <p className="text-xs text-slate-400">
-                      This is on-chain registered X username. Please write correct username.
-                    </p>
+                    <p className="text-xs text-slate-400">Search existing on-chain registered X usernames.</p>
                     <Dialog open={showNadList} onOpenChange={setShowNadList}>
                       <DialogTrigger asChild>
                         <Button variant="outline" size="sm" className="text-xs h-6 px-2" onClick={() => loadNadList(1)}>
@@ -671,6 +770,7 @@ export default function GameUI() {
                 {showDropdown && (
                   <Card className="absolute top-full left-0 right-0 mt-2 bg-white/95 backdrop-blur-xl border border-white/20 shadow-2xl z-[100]">
                     <CardContent className="p-0">
+                      {/* NAD Search Results */}
                       {searchResults.length > 0 ? (
                         <div className="max-h-64 overflow-y-auto">
                           {searchResults.map((result) => {
@@ -685,6 +785,7 @@ export default function GameUI() {
                               >
                                 <div className="flex items-center space-x-3">
                                   <Avatar className="w-10 h-10">
+                                    <AvatarImage src={result.pp} />
                                     <AvatarFallback className="bg-slate-500 text-white font-bold">
                                       {result.displayName.charAt(0)}
                                     </AvatarFallback>
@@ -721,7 +822,8 @@ export default function GameUI() {
                             );
                           })}
                         </div>
-                      ) : username.length >= 2 && !isSearching ? (
+                      ) : /* No Results */
+                      username.length >= 2 && !isSearching ? (
                         <div className="p-8 text-center">
                           <Search className="w-12 h-12 mx-auto mb-4 text-slate-400" />
                           <p className="text-slate-600 font-medium">No NAD found</p>
@@ -819,6 +921,21 @@ export default function GameUI() {
                     <AvatarFallback className="bg-slate-500 text-white text-xs">U</AvatarFallback>
                   </Avatar>
                   <span>Profile</span>
+                  <Popover>
+                    <PopoverTrigger>
+                      {" "}
+                      <Badge variant="outline" className="border-green-300 text-green-300 text-xs cursor-pointer">
+                        ?
+                      </Badge>
+                    </PopoverTrigger>
+                    <PopoverContent>
+                      To start playing, you must have linked your Monad Games ID and created your username.
+                      <b>
+                        For the best experience, you should also link your X account to your game account and complete
+                        your on-chain registration.
+                      </b>
+                    </PopoverContent>
+                  </Popover>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -855,20 +972,10 @@ export default function GameUI() {
                         <p className="font-mono text-sm text-slate-300 mb-3">
                           {embeddedWallet.slice(0, 6)}...{embeddedWallet.slice(-4)}
                         </p>
-                        <Button
-                          onClick={fundWallet}
-                          size="sm"
-                          variant="outline"
-                          className="w-full border-slate-500/50 text-slate-300 hover:bg-slate-500/20 mb-2"
-                        >
+                        <Button onClick={fundWallet} size="sm" variant="secondary" className="w-full  mb-2">
                           Fund Wallet
                         </Button>
-                        <Button
-                          onClick={exportWalletPrivy}
-                          size="sm"
-                          variant="outline"
-                          className="w-full border-slate-500/50 text-slate-300 hover:bg-slate-500/20"
-                        >
+                        <Button onClick={exportWalletPrivy} size="sm" variant="outline" className="w-full ">
                           Export Wallet
                         </Button>
                       </div>

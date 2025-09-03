@@ -1067,7 +1067,6 @@ export function useMonadService() {
     if (ready && authenticated && user && wallets) {
       const fetchData = async () => {
         if (ready && authenticated && user) {
-          console.log(user);
           await getMonadWallet();
           await checkUsername();
           await getEmbeddedWallet();
@@ -1102,7 +1101,6 @@ export function useMonadService() {
     const embedded: WalletWithMetadata | undefined = wallets?.find((wallet) => wallet.walletClientType === "privy") as
       | WalletWithMetadata
       | undefined;
-    console.log("embedded", embedded);
     if (embedded) {
       setEmbeddedWallet(embedded?.address as `0x${string}`);
     } else {
@@ -1169,9 +1167,6 @@ export function useMonadService() {
 
   const getNad = async () => {
     try {
-      console.log("🔍 Getting NAD for monadWallet:", monadWallet);
-      console.log("📍 Contract address:", contractAddress);
-
       const nadId = await publicClient.readContract({
         address: contractAddress,
         abi: abi,
@@ -1179,11 +1174,7 @@ export function useMonadService() {
         args: [monadWallet],
       });
 
-      console.log("📊 NAD ID from contract:", nadId, "Type:", typeof nadId);
-
       if (nadId && Number(nadId) > 0) {
-        console.log("✅ NAD ID is valid, getting stats...");
-
         const nadStats: [
           string,
           { id: string; pp: string; username: string; displayName: string },
@@ -1196,8 +1187,6 @@ export function useMonadService() {
           functionName: "getNadStats",
           args: [nadId],
         })) as [string, { id: string; pp: string; username: string; displayName: string }, boolean, bigint, bigint];
-
-        console.log("📈 Raw NAD Stats from contract:", nadStats);
 
         const nadData = {
           walletAddress: monadWallet as `0x${string}`,
@@ -1212,10 +1201,8 @@ export function useMonadService() {
           slapsReceived: Number(nadStats[4]),
         };
 
-        console.log("💾 Setting NAD data:", nadData);
         setNad(nadData);
       } else {
-        console.log("❌ No NAD found for this wallet");
         setNad(null);
       }
     } catch (error) {
@@ -1239,8 +1226,6 @@ export function useMonadService() {
       { address: embeddedWallet as `0x${string}` }
     );
 
-    console.log("Transaction sent:", tx);
-
     // Fetch NAD data after transaction
     await getNad();
   };
@@ -1250,7 +1235,6 @@ export function useMonadService() {
       amount: "0.05",
       chain: monadTestnet,
     });
-    console.log("Transaction sent:", tx);
   };
 
   const linkTwitterToNad = async () => {
@@ -1273,7 +1257,6 @@ export function useMonadService() {
       },
       { address: embeddedWallet as `0x${string}` }
     );
-    console.log("Transaction sent:", tx);
 
     // Fetch NAD data after transaction
     await getNad();
@@ -1295,32 +1278,196 @@ export function useMonadService() {
     return { nadId, nad };
   };
 
-  // Get top slappers (most active slappers)
+  // Get top slappers (most active slappers) with NAD details
   const getTopSlappers = async () => {
     try {
-      const topSlappers = await publicClient.readContract({
+      const topSlappersWallets = await publicClient.readContract({
         address: contractAddress,
         abi: abi,
         functionName: "getTopSlappers",
         args: [],
       });
-      return topSlappers;
+
+      if (!topSlappersWallets || !Array.isArray(topSlappersWallets) || topSlappersWallets.length === 0) {
+        return [];
+      }
+
+      // Filter out zero addresses and create multicall contracts
+      const validWallets = (topSlappersWallets as string[]).filter(
+        (wallet: string) => wallet && wallet !== "0x0000000000000000000000000000000000000000"
+      );
+
+      if (validWallets.length === 0) {
+        return [];
+      }
+
+      // Create contracts array for multicall to get NAD IDs
+      const nadIdContracts = validWallets.map((wallet: string) => ({
+        address: contractAddress as `0x${string}`,
+        abi: abi as Abi,
+        functionName: "monadToNad",
+        args: [wallet],
+      }));
+
+      // Get NAD IDs for all wallets
+      const nadIdResults = await publicClient.multicall({ contracts: nadIdContracts });
+
+      // Filter valid NAD IDs and create contracts for getNadStats
+      const validNadIds: Array<{ wallet: string; nadId: bigint }> = [];
+      nadIdResults.forEach((result, index) => {
+        if (result.status === "success" && result.result && Number(result.result) > 0) {
+          validNadIds.push({
+            wallet: validWallets[index],
+            nadId: result.result as bigint,
+          });
+        }
+      });
+
+      if (validNadIds.length === 0) {
+        return [];
+      }
+
+      // Create contracts array for multicall to get NAD stats
+      const nadStatsContracts = validNadIds.map(({ nadId }) => ({
+        address: contractAddress as `0x${string}`,
+        abi: abi as Abi,
+        functionName: "getNadStats",
+        args: [nadId],
+      }));
+
+      // Get NAD stats for all valid NADs
+      const nadStatsResults = await publicClient.multicall({ contracts: nadStatsContracts });
+
+      // Build the final result with NAD details
+      const topSlappersWithDetails = validNadIds
+        .map(({ wallet }, index) => {
+          const statsResult = nadStatsResults[index];
+          if (statsResult.status === "success" && statsResult.result) {
+            const nadStats = statsResult.result as [
+              string,
+              { id: string; pp: string; username: string; displayName: string },
+              boolean,
+              bigint,
+              bigint
+            ];
+
+            return {
+              wallet,
+              nadId: Number(validNadIds[index].nadId),
+              x: {
+                id: nadStats[1]?.id || "",
+                pp: nadStats[1]?.pp || "",
+                username: nadStats[1]?.username || "",
+                displayName: nadStats[1]?.displayName || "",
+              },
+              isPlayer: nadStats[2],
+              slapsGiven: Number(nadStats[3]),
+              slapsReceived: Number(nadStats[4]),
+            };
+          }
+          return null;
+        })
+        .filter((item) => item !== null); // Return all valid NADs
+
+      return topSlappersWithDetails;
     } catch (error) {
       console.error("Error getting top slappers:", error);
       return [];
     }
   };
 
-  // Get top slapped (most slapped users)
+  // Get top slapped (most slapped users) with NAD details
   const getTopSlapped = async () => {
     try {
-      const topSlapped = await publicClient.readContract({
+      const topSlappedWallets = await publicClient.readContract({
         address: contractAddress,
         abi: abi,
         functionName: "getTopSlapped",
         args: [],
       });
-      return topSlapped;
+
+      if (!topSlappedWallets || !Array.isArray(topSlappedWallets) || topSlappedWallets.length === 0) {
+        return [];
+      }
+
+      // Filter out zero addresses and create multicall contracts
+      const validWallets = (topSlappedWallets as string[]).filter(
+        (wallet: string) => wallet && wallet !== "0x0000000000000000000000000000000000000000"
+      );
+
+      if (validWallets.length === 0) {
+        return [];
+      }
+
+      // Create contracts array for multicall to get NAD IDs
+      const nadIdContracts = validWallets.map((wallet: string) => ({
+        address: contractAddress as `0x${string}`,
+        abi: abi as Abi,
+        functionName: "monadToNad",
+        args: [wallet],
+      }));
+
+      // Get NAD IDs for all wallets
+      const nadIdResults = await publicClient.multicall({ contracts: nadIdContracts });
+
+      // Filter valid NAD IDs and create contracts for getNadStats
+      const validNadIds: Array<{ wallet: string; nadId: bigint }> = [];
+      nadIdResults.forEach((result, index) => {
+        if (result.status === "success" && result.result && Number(result.result) > 0) {
+          validNadIds.push({
+            wallet: validWallets[index],
+            nadId: result.result as bigint,
+          });
+        }
+      });
+
+      if (validNadIds.length === 0) {
+        return [];
+      }
+
+      // Create contracts array for multicall to get NAD stats
+      const nadStatsContracts = validNadIds.map(({ nadId }) => ({
+        address: contractAddress as `0x${string}`,
+        abi: abi as Abi,
+        functionName: "getNadStats",
+        args: [nadId],
+      }));
+
+      // Get NAD stats for all valid NADs
+      const nadStatsResults = await publicClient.multicall({ contracts: nadStatsContracts });
+
+      // Build the final result with NAD details
+      const topSlappedWithDetails = validNadIds
+        .map(({ wallet }, index) => {
+          const statsResult = nadStatsResults[index];
+          if (statsResult.status === "success" && statsResult.result) {
+            const nadStats = statsResult.result as [
+              string,
+              { id: string; pp: string; username: string; displayName: string },
+              boolean,
+              bigint,
+              bigint
+            ];
+
+            return {
+              wallet,
+              nadId: Number(validNadIds[index].nadId),
+              x: {
+                id: nadStats[1]?.id || "",
+                pp: nadStats[1]?.pp || "",
+                username: nadStats[1]?.username || "",
+                displayName: nadStats[1]?.displayName || "",
+              },
+              isPlayer: nadStats[2],
+              slapsGiven: Number(nadStats[3]),
+              slapsReceived: Number(nadStats[4]),
+            };
+          }
+          return null;
+        })
+        .filter((item) => item !== null); // Return all valid NADs
+
+      return topSlappedWithDetails;
     } catch (error) {
       console.error("Error getting top slapped:", error);
       return [];
@@ -1436,7 +1583,6 @@ export function useMonadService() {
         },
         { address: embeddedWallet as `0x${string}` }
       );
-      console.log("Slap transaction sent:", tx);
 
       // Slap başarılı olduktan sonra kullanıcının kendi NAD verilerini güncelle
       if (nad) {
@@ -1456,8 +1602,6 @@ export function useMonadService() {
       throw error;
     }
   };
-
-  // E
 
   return {
     // Privy states
@@ -1487,5 +1631,6 @@ export function useMonadService() {
     getNadStatsByWallet,
     getNadCount,
     getNadsBatch,
+    // X API functions
   };
 }
